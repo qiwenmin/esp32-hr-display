@@ -1,205 +1,97 @@
 #include <Arduino.h>
-#include <BLEDevice.h>
-#include <BLEUtils.h>
-#include <BLEScan.h>
-#include <BLEAdvertisedDevice.h>
+#include <NimBLEDevice.h>
 
-/* ================= UUID ================= */
-static BLEUUID HR_SERVICE_UUID("180D");
-static BLEUUID HR_CHAR_UUID("2A37");
+// 配置：只保留核心业务参数
+#define RSSI_LIMIT -90
+static NimBLEAddress targetAddr;
+static NimBLEClient* pClient = nullptr;
+static bool doConnect = false;
 
-/* ================= BLE 对象 ================= */
-BLEScan* bleScan = nullptr;
-BLEClient* bleClient = nullptr;
-BLERemoteCharacteristic* hrChar = nullptr;
-BLEAdvertisedDevice* targetDevice = nullptr;
-
-/* ================= 状态机 ================= */
-enum BleState {
-  BLE_SCANNING,
-  BLE_CONNECTING,
-  BLE_CONNECTED
-};
-
-volatile BleState bleState = BLE_SCANNING;
-
-/* ================= 心率时间管理 ================= */
-unsigned long lastHrMillis = 0;
-const unsigned long HR_TIMEOUT_MS = 5000;   // 5 秒无心率 → 认为异常
-
-/* ================= 其他状态变量 ================= */
-static bool scanning = false;
-
-/* ================= 心率通知回调 ================= */
-void hrNotifyCallback(
-  BLERemoteCharacteristic*,
-  uint8_t* pData,
-  size_t length,
-  bool
-) {
-  if (length < 2) return;
-
-  uint8_t flags = pData[0];
-  uint16_t hr;
-
-  if ((flags & 0x01) == 0) {
-    hr = pData[1];
-  } else {
-    if (length < 3) return;
-    hr = pData[1] | (pData[2] << 8);
-  }
-
-  lastHrMillis = millis();
-
-  Serial.print("Heart Rate: ");
-  Serial.println(hr);
+/* =========================================================
+ * 业务逻辑：心率处理
+ * ========================================================= */
+void hrNotifyCallback(NimBLERemoteCharacteristic* chr, uint8_t* data, size_t len, bool isNotify) {
+    if (len < 2) return;
+    uint8_t hr = (data[0] & 0x01) ? (data[1] | (data[2] << 8)) : data[1];
+    Serial.printf("[HR] %d bpm\n", hr);
 }
 
-/* ================= Client 回调 ================= */
-class MyClientCallbacks : public BLEClientCallbacks {
-  void onConnect(BLEClient*) override {
-    Serial.println("BLE connected");
-    lastHrMillis = millis();
-  }
-
-  void onDisconnect(BLEClient*) override {
-    Serial.println("BLE disconnected");
-
-    hrChar = nullptr;
-
-    if (bleClient) {
-      delete bleClient;
-      bleClient = nullptr;
+/* =========================================================
+ * BLE 事件驱动（简洁的回调）
+ * ========================================================= */
+class MyBLECallbacks : public NimBLEClientCallbacks, public NimBLEScanCallbacks {
+    // 发现设备
+    void onResult(const NimBLEAdvertisedDevice* dev) override {
+        if (dev->isAdvertisingService(NimBLEUUID((uint16_t)0x180D)) && dev->getRSSI() >= RSSI_LIMIT) {
+            targetAddr = dev->getAddress();
+            NimBLEDevice::getScan()->stop();
+            doConnect = true; // 告知任务可以连接了
+        }
     }
-
-    if (targetDevice) {
-      delete targetDevice;
-      targetDevice = nullptr;
+    // 断开连接
+    void onDisconnect(NimBLEClient* c, int reason) override {
+        Serial.printf("Link Lost (Reason: %d). Scanning resumed.\n", reason);
+        doConnect = false;
+        NimBLEDevice::getScan()->start(0, false); // 自动恢复扫描
     }
-
-    scanning = false;
-    bleState = BLE_SCANNING;
-  }
 };
 
-/* ================= 扫描回调 ================= */
-class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
-  void onResult(BLEAdvertisedDevice advertisedDevice) override {
+static MyBLECallbacks bleHandler;
 
-    if (bleState != BLE_SCANNING) return;
-    if (!advertisedDevice.haveServiceUUID()) return;
-    if (!advertisedDevice.isAdvertisingService(HR_SERVICE_UUID)) return;
+/* =========================================================
+ * 稳定的连接函数（由任务调用）
+ * ========================================================= */
+bool connectToDevice() {
+    if (!pClient->connect(targetAddr, false)) return false;
 
-    Serial.print("Found HR device: ");
-    Serial.println(advertisedDevice.getAddress().toString().c_str());
-
-    targetDevice = new BLEAdvertisedDevice(advertisedDevice);
-
-    bleState = BLE_CONNECTING;
-    bleScan->stop();
-    scanning = false;
-  }
-};
-
-/* ================= 连接函数 ================= */
-bool connectToHeartRateDevice() {
-
-  bleClient = BLEDevice::createClient();
-  bleClient->setClientCallbacks(new MyClientCallbacks());
-
-  Serial.println("Connecting...");
-
-  if (!bleClient->connect(targetDevice)) {
-    Serial.println("Connect failed");
-
-    delete bleClient;
-    bleClient = nullptr;
-
-    delete targetDevice;
-    targetDevice = nullptr;
-
+    NimBLERemoteService* pSvc = pClient->getService("180D");
+    if (pSvc) {
+        NimBLERemoteCharacteristic* pChar = pSvc->getCharacteristic("2A37");
+        if (pChar && pChar->subscribe(true, hrNotifyCallback)) {
+            Serial.println(">>> Subscribed Successfully");
+            return true;
+        }
+    }
+    pClient->disconnect();
     return false;
-  }
-
-  BLERemoteService* hrService = bleClient->getService(HR_SERVICE_UUID);
-  if (!hrService) {
-    Serial.println("Heart Rate service not found");
-    bleClient->disconnect();
-    return false;
-  }
-
-  hrChar = hrService->getCharacteristic(HR_CHAR_UUID);
-  if (!hrChar) {
-    Serial.println("Heart Rate characteristic not found");
-    bleClient->disconnect();
-    return false;
-  }
-
-  if (hrChar->canNotify()) {
-    hrChar->registerForNotify(hrNotifyCallback);
-    Serial.println("Subscribed to heart rate notifications");
-  } else {
-    Serial.println("Heart Rate characteristic cannot notify");
-    bleClient->disconnect();
-    return false;
-  }
-
-  lastHrMillis = millis();
-  bleState = BLE_CONNECTED;
-  return true;
 }
 
-/* ================= Arduino ================= */
+/* =========================================================
+ * 主管理任务（逻辑清晰）
+ * ========================================================= */
+void hrManagerTask(void* arg) {
+    for (;;) {
+        if (doConnect && !pClient->isConnected()) {
+            Serial.println(">>> Attempting Connection...");
+            if (!connectToDevice()) {
+                Serial.println(">>> Connect Failed, returning to scan.");
+                doConnect = false;
+                NimBLEDevice::getScan()->start(0, false);
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(500)); // 降低 CPU 占用
+    }
+}
+
 void setup() {
-  Serial.begin(115200);
-  Serial.println("\nESP32-C3 BLE Heart Rate Receiver (stable + watchdog)");
+    Serial.begin(115200);
+    NimBLEDevice::init("C3_HR_MONITOR");
+    NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
-  pinMode(LED_BUILTIN, OUTPUT);
+    // 初始化全局 Client（一生只创建一次）
+    pClient = NimBLEDevice::createClient();
+    pClient->setClientCallbacks(&bleHandler, false);
 
-  BLEDevice::init("");
+    // 初始化扫描器
+    NimBLEScan* pScan = NimBLEDevice::getScan();
+    pScan->setScanCallbacks(&bleHandler, false);
+    pScan->setInterval(150);
+    pScan->setWindow(100);
+    pScan->setActiveScan(true);
+    pScan->setDuplicateFilter(false); // 关键：关闭过滤以保证重连响应
+    pScan->start(0, false);
 
-  bleScan = BLEDevice::getScan();
-  bleScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
-  bleScan->setInterval(120);
-  bleScan->setWindow(80);
-  bleScan->setActiveScan(true);
-
-  bleState = BLE_SCANNING;
-  scanning = false;
+    xTaskCreate(hrManagerTask, "hr_mgr", 4096, nullptr, 1, nullptr);
 }
 
-void loop() {
-
-  /* ---------- SCANNING ---------- */
-  if (bleState == BLE_SCANNING) {
-    if (!scanning) {
-      Serial.println("Start scanning...");
-      bleScan->start(0);
-      scanning = true;
-    }
-  }
-
-  /* ---------- CONNECTING ---------- */
-  if (bleState == BLE_CONNECTING && targetDevice) {
-    if (!connectToHeartRateDevice()) {
-      Serial.println("Connect failed, return to scan");
-      bleState = BLE_SCANNING;
-      scanning = false;
-      delay(1000);
-    }
-  }
-
-  /* ---------- CONNECTED ---------- */
-  if (bleState == BLE_CONNECTED) {
-    if (millis() - lastHrMillis > HR_TIMEOUT_MS) {
-      Serial.println("Heart rate timeout, force disconnect");
-      if (bleClient && bleClient->isConnected()) {
-        bleClient->disconnect();
-      }
-    }
-
-    digitalWrite(LED_BUILTIN, digitalRead(LED_BUILTIN) == 0);
-  }
-
-  delay(200);
-}
+void loop() { vTaskDelay(portMAX_DELAY); }
