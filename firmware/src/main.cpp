@@ -73,6 +73,8 @@ bool connectToDevice() {
     }
 
     Serial.println("[CONN] Connected, discovering services...");
+    pClient->getServices(true);
+
     NimBLERemoteService* pSvc = pClient->getService("180D");
     if (pSvc) {
         NimBLERemoteCharacteristic* pChar = pSvc->getCharacteristic("2A37");
