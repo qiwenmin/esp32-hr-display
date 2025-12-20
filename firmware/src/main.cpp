@@ -1,97 +1,168 @@
 #include <Arduino.h>
 #include <NimBLEDevice.h>
-
-// 配置：只保留核心业务参数
-#define RSSI_LIMIT -90
-static NimBLEAddress targetAddr;
-static NimBLEClient* pClient = nullptr;
-static bool doConnect = false;
+#include <TM1638plus_Model2.h>
 
 /* =========================================================
- * 业务逻辑：心率处理
+ * 引脚配置 (WeAct ESP32-C3)
+ * ========================================================= */
+#define TM_STB 10
+#define TM_CLK 6
+#define TM_DIO 7
+
+#define RSSI_LIMIT -90
+
+TM1638plus_Model2 module(TM_STB, TM_CLK, TM_DIO);
+
+static NimBLEClient* pClient = nullptr;
+static NimBLEAddress targetAddr;
+static bool doConnect = false;
+static uint8_t currentHR = 0;
+
+/* =========================================================
+ * BLE 通知处理
  * ========================================================= */
 void hrNotifyCallback(NimBLERemoteCharacteristic* chr, uint8_t* data, size_t len, bool isNotify) {
-    if (len < 2) return;
-    uint8_t hr = (data[0] & 0x01) ? (data[1] | (data[2] << 8)) : data[1];
-    Serial.printf("[HR] %d bpm\n", hr);
+    if (len < 1) return;
+
+    // 心率数据解析：通常第1字节是Flag，第2字节是HR值
+    uint8_t hrValue = (data[0] & 0x01) ? (data[1] | (data[2] << 8)) : data[1];
+
+    // 串口输出心率值
+    if (hrValue > 0 && hrValue != currentHR) {
+        Serial.printf("[DATA] Heart Rate: %d bpm\n", hrValue);
+    }
+
+    // 更新全局变量
+    currentHR = hrValue;
 }
 
 /* =========================================================
- * BLE 事件驱动（简洁的回调）
+ * BLE 回调
  * ========================================================= */
 class MyBLECallbacks : public NimBLEClientCallbacks, public NimBLEScanCallbacks {
-    // 发现设备
     void onResult(const NimBLEAdvertisedDevice* dev) override {
         if (dev->isAdvertisingService(NimBLEUUID((uint16_t)0x180D)) && dev->getRSSI() >= RSSI_LIMIT) {
             targetAddr = dev->getAddress();
+            Serial.printf("[SCAN] Target found: %s, RSSI: %d\n", targetAddr.toString().c_str(), dev->getRSSI());
             NimBLEDevice::getScan()->stop();
-            doConnect = true; // 告知任务可以连接了
+            doConnect = true;
         }
     }
-    // 断开连接
+
     void onDisconnect(NimBLEClient* c, int reason) override {
-        Serial.printf("Link Lost (Reason: %d). Scanning resumed.\n", reason);
+        Serial.printf("[BLE] Disconnected, reason: %d\n", reason);
+        currentHR = 0;
         doConnect = false;
-        NimBLEDevice::getScan()->start(0, false); // 自动恢复扫描
+        // 断开后稍微延迟再扫描，增加稳定性
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        Serial.println("[SCAN] Resuming scan...");
+        NimBLEDevice::getScan()->start(0, false);
     }
 };
 
 static MyBLECallbacks bleHandler;
 
 /* =========================================================
- * 稳定的连接函数（由任务调用）
+ * 连接逻辑
  * ========================================================= */
 bool connectToDevice() {
-    if (!pClient->connect(targetAddr, false)) return false;
+    Serial.printf("[CONN] Attempting to connect to %s\n", targetAddr.toString().c_str());
+    if (!pClient->connect(targetAddr, false)) {
+        Serial.println("[CONN] Connection failed");
+        return false;
+    }
 
+    Serial.println("[CONN] Connected, discovering services...");
     NimBLERemoteService* pSvc = pClient->getService("180D");
     if (pSvc) {
         NimBLERemoteCharacteristic* pChar = pSvc->getCharacteristic("2A37");
-        if (pChar && pChar->subscribe(true, hrNotifyCallback)) {
-            Serial.println(">>> Subscribed Successfully");
-            return true;
+        if (pChar && pChar->canNotify()) {
+            if (pChar->subscribe(true, hrNotifyCallback)) {
+                Serial.println("[CONN] HR service subscribed successfully");
+                return true;
+            }
         }
     }
+
+    Serial.println("[CONN] Service or characteristic not found");
     pClient->disconnect();
     return false;
 }
 
 /* =========================================================
- * 主管理任务（逻辑清晰）
+ * Model 2 显示任务
+ * ========================================================= */
+void displayTask(void* arg) {
+    module.displayBegin();
+    module.brightness(1);
+
+    char textBuffer[16];
+
+    for (;;) {
+        if (pClient && pClient->isConnected()) {
+            // Model 2 使用 DisplayStr
+            if (currentHR) {
+                snprintf(textBuffer, sizeof(textBuffer), "Hr   %3d", currentHR);
+            } else {
+                snprintf(textBuffer, sizeof(textBuffer), "Hr   ---");
+            }
+        } else if (doConnect) {
+            snprintf(textBuffer, sizeof(textBuffer), "Conn....");
+        } else {
+            snprintf(textBuffer, sizeof(textBuffer), "SCAN....");
+        }
+
+        // Model 2 专用的显示函数：DisplayStr(字符串, 填充ASCII)
+        // 注意：Model 2 库对字符位置映射比较严格
+        module.DisplayStr(textBuffer, 0);
+
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
+}
+
+/* =========================================================
+ * BLE 管理任务
  * ========================================================= */
 void hrManagerTask(void* arg) {
     for (;;) {
         if (doConnect && !pClient->isConnected()) {
-            Serial.println(">>> Attempting Connection...");
             if (!connectToDevice()) {
-                Serial.println(">>> Connect Failed, returning to scan.");
                 doConnect = false;
+                Serial.println("[MGR] Connection failed, back to scanning");
                 NimBLEDevice::getScan()->start(0, false);
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(500)); // 降低 CPU 占用
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
 
+/* =========================================================
+ * Setup & Loop
+ * ========================================================= */
 void setup() {
     Serial.begin(115200);
-    NimBLEDevice::init("C3_HR_MONITOR");
-    NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+    Serial.println("\n[SYS] ESP32-C3 HR Monitor Starting...");
 
-    // 初始化全局 Client（一生只创建一次）
+    // 初始化蓝牙
+    NimBLEDevice::init("C3_HR_MON");
     pClient = NimBLEDevice::createClient();
     pClient->setClientCallbacks(&bleHandler, false);
 
-    // 初始化扫描器
+    // 配置扫描
     NimBLEScan* pScan = NimBLEDevice::getScan();
     pScan->setScanCallbacks(&bleHandler, false);
     pScan->setInterval(150);
     pScan->setWindow(100);
-    pScan->setActiveScan(true);
-    pScan->setDuplicateFilter(false); // 关键：关闭过滤以保证重连响应
+    pScan->setDuplicateFilter(false);
+
+    Serial.println("[SCAN] Initial scan started...");
     pScan->start(0, false);
 
+    // 创建 FreeRTOS 任务
     xTaskCreate(hrManagerTask, "hr_mgr", 4096, nullptr, 1, nullptr);
+    xTaskCreate(displayTask,   "ds_mgr", 2048, nullptr, 1, nullptr);
 }
 
-void loop() { vTaskDelay(portMAX_DELAY); }
+void loop() {
+    vTaskDelay(portMAX_DELAY);
+}
