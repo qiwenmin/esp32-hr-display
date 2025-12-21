@@ -172,6 +172,8 @@ static struct primfcn my_primitives[] = {
     {"0BR!", forth_set_br},
     {"0BR@", forth_get_br},
 
+    {"0REBOOT", esp_restart},
+
     {NULL, NULL}
 };
 
