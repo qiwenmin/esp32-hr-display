@@ -166,12 +166,54 @@ static void forth_get_br() {
     Push = (atl_int) brightness;
 }
 
+static void forth_list_tasks() {
+    // 1. 获取当前任务总数
+    UBaseType_t uxArraySize = uxTaskGetNumberOfTasks();
+
+    // 2. 为任务状态数组分配内存
+    TaskStatus_t *pxTaskStatusArray = (TaskStatus_t *)pvPortMalloc(uxArraySize * sizeof(TaskStatus_t));
+
+    if (pxTaskStatusArray != NULL) {
+        // 3. 获取所有任务的状态信息
+        // 第三个参数为 NULL 表示不计算 CPU 使用率百分比（需要额外配置计时器）
+        uxArraySize = uxTaskGetSystemState(pxTaskStatusArray, uxArraySize, NULL);
+
+        Serial.println("\n--- Task Debug Info ---");
+        Serial.printf("%-16s %-10s %-10s %-10s %-10s\n", "Name", "State", "Priority", "StackMin", "Number");
+
+        for (UBaseType_t x = 0; x < uxArraySize; x++) {
+            char stateChar;
+            switch (pxTaskStatusArray[x].eCurrentState) {
+                case eRunning:   stateChar = 'X'; break; // 正在运行
+                case eReady:     stateChar = 'R'; break; // 就绪
+                case eBlocked:   stateChar = 'B'; break; // 阻塞
+                case eSuspended: stateChar = 'S'; break; // 挂起
+                case eDeleted:   stateChar = 'D'; break; // 已删除
+                default:         stateChar = '?'; break;
+            }
+
+            Serial.printf("%-16s %-10c %-10u %-10u %-10u\n",
+                          pxTaskStatusArray[x].pcTaskName,
+                          stateChar,
+                          (unsigned int)pxTaskStatusArray[x].uxCurrentPriority,
+                          (unsigned int)pxTaskStatusArray[x].usStackHighWaterMark, // 剩余堆栈最小值
+                          (unsigned int)pxTaskStatusArray[x].xTaskNumber);
+        }
+
+        // 4. 释放内存
+        vPortFree(pxTaskStatusArray);
+    } else {
+        Serial.println("Failed to allocate memory for task stats.");
+    }
+}
+
 static struct primfcn my_primitives[] = {
     {"0HR", forth_get_hr},
 
     {"0BR!", forth_set_br},
     {"0BR@", forth_get_br},
 
+    {"0PS", forth_list_tasks},
     {"0REBOOT", esp_restart},
 
     {NULL, NULL}
