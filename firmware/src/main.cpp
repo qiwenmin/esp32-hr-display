@@ -261,8 +261,8 @@ static struct primfcn my_primitives[] = {
     {"0BR!", forth_set_br},
     {"0BR@", forth_get_br},
 
-    {"0VERBOSE!", forth_set_verbose},
-    {"0VERBOSE@", forth_get_verbose},
+    {"0VERB!", forth_set_verbose},
+    {"0VERB@", forth_get_verbose},
 
     {"0SAVE", saveSettings},
 
