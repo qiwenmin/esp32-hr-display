@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <NimBLEDevice.h>
+#include <Preferences.h>
 #include <TM1638plus_Model2.h>
 
 extern "C" {
@@ -22,6 +23,10 @@ static NimBLEClient* pClient = nullptr;
 static NimBLEAddress targetAddr;
 static bool doConnect = false;
 static uint8_t currentHR = 0;
+
+static Preferences prefs;
+const char* pref_namespace = "sys_cfg";
+
 static uint8_t brightness = 1;
 static uint8_t verbose = 1;
 
@@ -149,6 +154,32 @@ void hrManagerTask(void* arg) {
 }
 
 /* =========================================================
+ * 配置的保存和加载
+ * ========================================================= */
+static void saveSettings() {
+    // 参数2为 false 表示读写模式
+    prefs.begin(pref_namespace, false);
+
+    prefs.putUChar("brightness", brightness);
+    prefs.putUChar("verbose", verbose);
+
+    prefs.end(); // 关闭并保存
+
+    INFO Serial.println("Settings saved to NVS.");
+}
+
+static void loadSettings() {
+    // 参数2为 true 表示只读模式
+    prefs.begin(pref_namespace, true);
+
+    // 第二个参数是默认值。如果 NVS 中还没保存过该项，则返回此值。
+    brightness = prefs.getUChar("brightness", 1);
+    verbose = prefs.getUChar("verbose", 1);
+
+    prefs.end();
+}
+
+/* =========================================================
  * forth解释器任务及相关的词
  * ========================================================= */
 static void forth_get_hr() {
@@ -233,6 +264,8 @@ static struct primfcn my_primitives[] = {
     {"0VERBOSE!", forth_set_verbose},
     {"0VERBOSE@", forth_get_verbose},
 
+    {"0SAVE", saveSettings},
+
     {"0PS", forth_list_tasks},
     {"0REBOOT", esp_restart},
 
@@ -258,7 +291,8 @@ void forthTask(void* arg) {
             if (c == '\n') {
                 inputBuffer[idx] = '\0';
                 if (idx > 0) {
-                    printf(" ");
+                    Serial.print(" ");
+                    Serial.flush();
                     atl_eval(inputBuffer);
                     printf(" ok\n");
                     fflush(stdout);
@@ -295,6 +329,9 @@ void setup() {
     while (!Serial);
 
     INFO Serial.println("\n[SYS] ESP32-C3 HR Monitor Starting...");
+
+    // 加载配置
+    loadSettings();
 
     // 初始化蓝牙
     NimBLEDevice::init("C3_HR_MON");
