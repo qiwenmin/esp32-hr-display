@@ -3,6 +3,8 @@
 #include <Preferences.h>
 #include <TM1638plus_Model2.h>
 
+#include <set>
+
 extern "C" {
     #include "atlast.h"
     #include "atldef.h"
@@ -29,6 +31,8 @@ const char* pref_namespace = "sys_cfg";
 
 static uint8_t brightness = 1;
 static uint8_t verbose = 1;
+static bool enable_whitelist = false;
+static std::set<std::string> whitelist;
 
 #define ERROR if (verbose >= 1)
 #define INFO if (verbose >= 2)
@@ -59,6 +63,14 @@ class MyBLECallbacks : public NimBLEClientCallbacks, public NimBLEScanCallbacks 
         if (dev->isAdvertisingService(NimBLEUUID((uint16_t)0x180D)) && dev->getRSSI() >= RSSI_LIMIT) {
             targetAddr = dev->getAddress();
             INFO Serial.printf("[SCAN] Target found: %s, RSSI: %d\n", targetAddr.toString().c_str(), dev->getRSSI());
+            if (enable_whitelist) {
+                if (!whitelist.contains(targetAddr.toString())) {
+                    INFO Serial.printf("[SCAN] %s is not in the whitelist. Ignored.\n", targetAddr.toString().c_str());
+                    return;
+                } else {
+                    INFO Serial.printf("[SCAN] %s is in the whitelist.\n", targetAddr.toString().c_str());
+                }
+            }
             NimBLEDevice::getScan()->stop();
             doConnect = true;
         }
@@ -160,8 +172,19 @@ static void saveSettings() {
     // 参数2为 false 表示读写模式
     prefs.begin(pref_namespace, false);
 
+    prefs.clear();
+
     prefs.putUChar("brightness", brightness);
     prefs.putUChar("verbose", verbose);
+
+    prefs.putBool("wl_en", enable_whitelist);
+    prefs.putInt("wl_len", whitelist.size());
+    int i = 0;
+    for (const auto &mac : whitelist) {
+        char key[10];
+        snprintf(key, 10, "wl_%d", i++);
+        prefs.putString(key, mac.c_str());
+    }
 
     prefs.end(); // 关闭并保存
 
@@ -175,6 +198,18 @@ static void loadSettings() {
     // 第二个参数是默认值。如果 NVS 中还没保存过该项，则返回此值。
     brightness = prefs.getUChar("brightness", 1);
     verbose = prefs.getUChar("verbose", 1);
+
+    enable_whitelist = prefs.getBool("wl_en", false);
+
+    int wl_len = prefs.getInt("wl_len", 0);
+    for (int i = 0; i < wl_len; i++) {
+        char key[10];
+        snprintf(key, 10, "wl_%d", i);
+        String mac = prefs.getString(key, "");
+        if (mac.length() > 0) {
+            whitelist.insert(mac.c_str());
+        }
+    }
 
     prefs.end();
 }
@@ -212,6 +247,41 @@ static void forth_set_verbose() {
 static void forth_get_verbose() {
     So(1);
     Push = (atl_int) verbose;
+}
+
+static void forth_set_enable_whitelist() {
+    Sl(1);
+    enable_whitelist = (int)S0;
+    Pop;
+
+    if (enable_whitelist) enable_whitelist = 1;
+}
+
+static void forth_get_enable_whitelist() {
+    So(1);
+    Push = (atl_int) enable_whitelist;
+}
+
+static void forth_whitelist_list() {
+    Serial.print("mac-address white list\n");
+    Serial.print("----------------------\n");
+    for (auto &mac : whitelist) {
+        Serial.println(mac.c_str());
+    }
+}
+
+static void forth_whitelist_insert() {
+    Sl(1);
+    Hpc(S0);
+    whitelist.insert((char *) S0);
+    Pop;
+}
+
+static void forth_whitelist_erase() {
+    Sl(1);
+    Hpc(S0);
+    whitelist.erase((char *)S0);
+    Pop;
 }
 
 static void forth_list_tasks() {
@@ -263,6 +333,13 @@ static struct primfcn my_primitives[] = {
 
     {"0VERB!", forth_set_verbose},
     {"0VERB@", forth_get_verbose},
+
+    {"0WLEN!", forth_set_enable_whitelist},
+    {"0WLEN@", forth_get_enable_whitelist},
+
+    {"0WL?", forth_whitelist_list},
+    {"0WL+", forth_whitelist_insert},
+    {"0WL-", forth_whitelist_erase},
 
     {"0SAVE", saveSettings},
 
