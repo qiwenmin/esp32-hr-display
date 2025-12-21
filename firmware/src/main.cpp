@@ -104,14 +104,14 @@ void displayTask(void* arg) {
         if (pClient && pClient->isConnected()) {
             // Model 2 使用 DisplayStr
             if (currentHR) {
-                snprintf(textBuffer, sizeof(textBuffer), "Hr   %3d", currentHR);
+                snprintf(textBuffer, sizeof(textBuffer), "%3d", currentHR);
             } else {
-                snprintf(textBuffer, sizeof(textBuffer), "Hr   ---");
+                snprintf(textBuffer, sizeof(textBuffer), "---");
             }
         } else if (doConnect) {
-            snprintf(textBuffer, sizeof(textBuffer), "Conn....");
+            snprintf(textBuffer, sizeof(textBuffer), "Con");
         } else {
-            snprintf(textBuffer, sizeof(textBuffer), "SCAN....");
+            snprintf(textBuffer, sizeof(textBuffer), "Scn");
         }
 
         // Model 2 专用的显示函数：DisplayStr(字符串, 填充ASCII)
