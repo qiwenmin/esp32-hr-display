@@ -290,9 +290,9 @@ void setup() {
     pScan->start(0, false);
 
     // 创建 FreeRTOS 任务
-    xTaskCreate(hrManagerTask, "hr_mgr", 4096, nullptr, 1, nullptr);
-    xTaskCreate(displayTask,   "ds_mgr", 2048, nullptr, 1, nullptr);
-    xTaskCreate(forthTask,  "forth_cli", 4096, nullptr, 2, nullptr);
+    xTaskCreate(hrManagerTask, "hr_mgr", 4096, nullptr, 10, nullptr);
+    xTaskCreate(displayTask,   "ds_mgr", 2048, nullptr,  5, nullptr);
+    xTaskCreate(forthTask,  "forth_cli", 4096, nullptr,  2, nullptr);
 }
 
 void loop() {
