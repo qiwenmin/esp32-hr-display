@@ -23,6 +23,10 @@ static NimBLEAddress targetAddr;
 static bool doConnect = false;
 static uint8_t currentHR = 0;
 static uint8_t brightness = 1;
+static uint8_t verbose = 1;
+
+#define ERROR if (verbose >= 1)
+#define INFO if (verbose >= 2)
 
 /* =========================================================
  * BLE 通知处理
@@ -35,7 +39,7 @@ void hrNotifyCallback(NimBLERemoteCharacteristic* chr, uint8_t* data, size_t len
 
     // 串口输出心率值
     if (hrValue > 0 && hrValue != currentHR) {
-        Serial.printf("[DATA] Heart Rate: %d bpm\n", hrValue);
+        INFO Serial.printf("[DATA] Heart Rate: %d bpm\n", hrValue);
     }
 
     // 更新全局变量
@@ -49,19 +53,19 @@ class MyBLECallbacks : public NimBLEClientCallbacks, public NimBLEScanCallbacks 
     void onResult(const NimBLEAdvertisedDevice* dev) override {
         if (dev->isAdvertisingService(NimBLEUUID((uint16_t)0x180D)) && dev->getRSSI() >= RSSI_LIMIT) {
             targetAddr = dev->getAddress();
-            Serial.printf("[SCAN] Target found: %s, RSSI: %d\n", targetAddr.toString().c_str(), dev->getRSSI());
+            INFO Serial.printf("[SCAN] Target found: %s, RSSI: %d\n", targetAddr.toString().c_str(), dev->getRSSI());
             NimBLEDevice::getScan()->stop();
             doConnect = true;
         }
     }
 
     void onDisconnect(NimBLEClient* c, int reason) override {
-        Serial.printf("[BLE] Disconnected, reason: %d\n", reason);
+        INFO Serial.printf("[BLE] Disconnected, reason: %d\n", reason);
         currentHR = 0;
         doConnect = false;
         // 断开后稍微延迟再扫描，增加稳定性
         vTaskDelay(pdMS_TO_TICKS(1000));
-        Serial.println("[SCAN] Resuming scan...");
+        INFO Serial.println("[SCAN] Resuming scan...");
         NimBLEDevice::getScan()->start(0, false);
     }
 };
@@ -72,13 +76,13 @@ static MyBLECallbacks bleHandler;
  * 连接逻辑
  * ========================================================= */
 bool connectToDevice() {
-    Serial.printf("[CONN] Attempting to connect to %s\n", targetAddr.toString().c_str());
+    INFO Serial.printf("[CONN] Attempting to connect to %s\n", targetAddr.toString().c_str());
     if (!pClient->connect(targetAddr, false)) {
-        Serial.println("[CONN] Connection failed");
+        ERROR Serial.println("[CONN] Connection failed");
         return false;
     }
 
-    Serial.println("[CONN] Connected, discovering services...");
+    INFO Serial.println("[CONN] Connected, discovering services...");
     pClient->getServices(true);
 
     NimBLERemoteService* pSvc = pClient->getService("180D");
@@ -86,13 +90,13 @@ bool connectToDevice() {
         NimBLERemoteCharacteristic* pChar = pSvc->getCharacteristic("2A37");
         if (pChar && pChar->canNotify()) {
             if (pChar->subscribe(true, hrNotifyCallback)) {
-                Serial.println("[CONN] HR service subscribed successfully");
+                INFO Serial.println("[CONN] HR service subscribed successfully");
                 return true;
             }
         }
     }
 
-    Serial.println("[CONN] Service or characteristic not found");
+    ERROR Serial.println("[CONN] Service or characteristic not found");
     pClient->disconnect();
     return false;
 }
@@ -136,7 +140,7 @@ void hrManagerTask(void* arg) {
         if (doConnect && !pClient->isConnected()) {
             if (!connectToDevice()) {
                 doConnect = false;
-                Serial.println("[MGR] Connection failed, back to scanning");
+                ERROR Serial.println("[MGR] Connection failed, back to scanning");
                 NimBLEDevice::getScan()->start(0, false);
             }
         }
@@ -153,7 +157,7 @@ static void forth_get_hr() {
 }
 
 static void forth_set_br() {
-    Sl(1);      // 确保数据栈至少有一个数
+    Sl(1);
     brightness = (int)S0;
     Pop;
 
@@ -164,6 +168,19 @@ static void forth_set_br() {
 static void forth_get_br() {
     So(1);
     Push = (atl_int) brightness;
+}
+
+static void forth_set_verbose() {
+    Sl(1);
+    verbose = (int)S0;
+    Pop;
+
+    if (verbose > 2) verbose = 2;
+}
+
+static void forth_get_verbose() {
+    So(1);
+    Push = (atl_int) verbose;
 }
 
 static void forth_list_tasks() {
@@ -212,6 +229,9 @@ static struct primfcn my_primitives[] = {
 
     {"0BR!", forth_set_br},
     {"0BR@", forth_get_br},
+
+    {"0VERBOSE!", forth_set_verbose},
+    {"0VERBOSE@", forth_get_verbose},
 
     {"0PS", forth_list_tasks},
     {"0REBOOT", esp_restart},
@@ -272,7 +292,9 @@ void forthTask(void* arg) {
  * ========================================================= */
 void setup() {
     Serial.begin(115200);
-    Serial.println("\n[SYS] ESP32-C3 HR Monitor Starting...");
+    while (!Serial);
+
+    INFO Serial.println("\n[SYS] ESP32-C3 HR Monitor Starting...");
 
     // 初始化蓝牙
     NimBLEDevice::init("C3_HR_MON");
@@ -286,7 +308,7 @@ void setup() {
     pScan->setWindow(100);
     pScan->setDuplicateFilter(false);
 
-    Serial.println("[SCAN] Initial scan started...");
+    INFO Serial.println("[SCAN] Initial scan started...");
     pScan->start(0, false);
 
     // 创建 FreeRTOS 任务
