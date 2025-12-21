@@ -22,6 +22,7 @@ static NimBLEClient* pClient = nullptr;
 static NimBLEAddress targetAddr;
 static bool doConnect = false;
 static uint8_t currentHR = 0;
+static uint8_t brightness = 1;
 
 /* =========================================================
  * BLE 通知处理
@@ -101,7 +102,7 @@ bool connectToDevice() {
  * ========================================================= */
 void displayTask(void* arg) {
     module.displayBegin();
-    module.brightness(1);
+    module.brightness(brightness);
 
     char textBuffer[16];
 
@@ -144,16 +145,47 @@ void hrManagerTask(void* arg) {
 }
 
 /* =========================================================
- * forth解释器任务
+ * forth解释器任务及相关的词
  * ========================================================= */
+static void forth_get_hr() {
+    So(1);
+    Push = (atl_int) currentHR;
+}
+
+static void forth_set_br() {
+    Sl(1);      // 确保数据栈至少有一个数
+    brightness = (int)S0;
+    Pop;
+
+    if (brightness > 7) brightness = 7;
+    module.brightness(brightness);
+}
+
+static void forth_get_br() {
+    So(1);
+    Push = (atl_int) brightness;
+}
+
+static struct primfcn my_primitives[] = {
+    {"0HR", forth_get_hr},
+
+    {"0BR!", forth_set_br},
+    {"0BR@", forth_get_br},
+
+    {NULL, NULL}
+};
+
 void forthTask(void* arg) {
     char inputBuffer[128];
     int idx = 0;
 
     // 初始化 Atlast 实例
     atl_init();
+    atl_primdef(my_primitives);
 
     Serial.println("[FORTH] Interpreter Ready.");
+    Serial.println("[FORTH] ");
+    Serial.flush();
 
     for (;;) {
         if (Serial.available()) {
