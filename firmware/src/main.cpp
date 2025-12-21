@@ -2,6 +2,11 @@
 #include <NimBLEDevice.h>
 #include <TM1638plus_Model2.h>
 
+extern "C" {
+    #include "atlast.h"
+    #include "atldef.h"
+}
+
 /* =========================================================
  * 引脚配置 (WeAct ESP32-C3)
  * ========================================================= */
@@ -139,6 +144,47 @@ void hrManagerTask(void* arg) {
 }
 
 /* =========================================================
+ * forth解释器任务
+ * ========================================================= */
+void forthTask(void* arg) {
+    char inputBuffer[128];
+    int idx = 0;
+
+    // 初始化 Atlast 实例
+    atl_init();
+
+    Serial.println("[FORTH] Interpreter Ready.");
+
+    for (;;) {
+        if (Serial.available()) {
+            char c = Serial.read();
+            if (c == '\r') continue;
+
+            if (c == '\n') {
+                inputBuffer[idx] = '\0';
+                if (idx > 0) {
+                    printf(" ");
+                    atl_eval(inputBuffer);
+                    printf(" ok\n");
+                    fflush(stdout);
+                } else {
+                    printf("\n");
+                    fflush(stdout);
+                }
+                Serial.print("[FORTH] ");
+                Serial.flush();
+                idx = 0;
+            } else if (idx < sizeof(inputBuffer) - 1) {
+                inputBuffer[idx++] = c;
+                Serial.print(c); // 回显，这里用printf或putc，然后用fflush，不起作用。
+                Serial.flush();
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+/* =========================================================
  * Setup & Loop
  * ========================================================= */
 void setup() {
@@ -163,6 +209,7 @@ void setup() {
     // 创建 FreeRTOS 任务
     xTaskCreate(hrManagerTask, "hr_mgr", 4096, nullptr, 1, nullptr);
     xTaskCreate(displayTask,   "ds_mgr", 2048, nullptr, 1, nullptr);
+    xTaskCreate(forthTask,  "forth_cli", 4096, nullptr, 2, nullptr);
 }
 
 void loop() {
