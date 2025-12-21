@@ -184,13 +184,12 @@ void forthTask(void* arg) {
     atl_primdef(my_primitives);
 
     Serial.println("[FORTH] Interpreter Ready.");
-    Serial.println("[FORTH] ");
+    Serial.print("[FORTH] ");
     Serial.flush();
 
     for (;;) {
         if (Serial.available()) {
             char c = Serial.read();
-            if (c == '\r') continue;
 
             if (c == '\n') {
                 inputBuffer[idx] = '\0';
@@ -206,6 +205,14 @@ void forthTask(void* arg) {
                 Serial.print("[FORTH] ");
                 Serial.flush();
                 idx = 0;
+            } else if (!isprint(c)) {
+                if (c == '\b') {
+                    if (idx > 0) {
+                        Serial.print("\b \b");
+                        Serial.flush();
+                        idx--;
+                    }
+                }
             } else if (idx < sizeof(inputBuffer) - 1) {
                 inputBuffer[idx++] = c;
                 Serial.print(c); // 回显，这里用printf或putc，然后用fflush，不起作用。
