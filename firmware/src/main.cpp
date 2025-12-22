@@ -403,7 +403,6 @@ void forthTask(void* arg) {
  * ========================================================= */
 void setup() {
     Serial.begin(115200);
-    while (!Serial);
 
     INFO Serial.println("\n[SYS] ESP32-C3 HR Monitor Starting...");
 
