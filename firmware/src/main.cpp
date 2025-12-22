@@ -31,8 +31,8 @@ const char* pref_namespace = "sys_cfg";
 
 static uint8_t brightness = 1;
 static uint8_t verbose = 1;
-static bool enable_whitelist = false;
-static std::set<std::string> whitelist;
+static bool enable_allowlist = false;
+static std::set<std::string> allowlist;
 
 #define ERROR if (verbose >= 1)
 #define INFO if (verbose >= 2)
@@ -63,12 +63,12 @@ class MyBLECallbacks : public NimBLEClientCallbacks, public NimBLEScanCallbacks 
         if (dev->isAdvertisingService(NimBLEUUID((uint16_t)0x180D)) && dev->getRSSI() >= RSSI_LIMIT) {
             targetAddr = dev->getAddress();
             INFO Serial.printf("[SCAN] Target found: %s, RSSI: %d\n", targetAddr.toString().c_str(), dev->getRSSI());
-            if (enable_whitelist) {
-                if (!whitelist.contains(targetAddr.toString())) {
-                    INFO Serial.printf("[SCAN] %s is not in the whitelist. Ignored.\n", targetAddr.toString().c_str());
+            if (enable_allowlist) {
+                if (!allowlist.contains(targetAddr.toString())) {
+                    INFO Serial.printf("[SCAN] %s is not in the allowlist. Ignored.\n", targetAddr.toString().c_str());
                     return;
                 } else {
-                    INFO Serial.printf("[SCAN] %s is in the whitelist.\n", targetAddr.toString().c_str());
+                    INFO Serial.printf("[SCAN] %s is in the allowlist.\n", targetAddr.toString().c_str());
                 }
             }
             NimBLEDevice::getScan()->stop();
@@ -177,12 +177,12 @@ static void saveSettings() {
     prefs.putUChar("brightness", brightness);
     prefs.putUChar("verbose", verbose);
 
-    prefs.putBool("wl_en", enable_whitelist);
-    prefs.putInt("wl_len", whitelist.size());
+    prefs.putBool("al_en", enable_allowlist);
+    prefs.putInt("al_len", allowlist.size());
     int i = 0;
-    for (const auto &mac : whitelist) {
+    for (const auto &mac : allowlist) {
         char key[10];
-        snprintf(key, 10, "wl_%d", i++);
+        snprintf(key, 10, "al_%d", i++);
         prefs.putString(key, mac.c_str());
     }
 
@@ -199,15 +199,15 @@ static void loadSettings() {
     brightness = prefs.getUChar("brightness", 1);
     verbose = prefs.getUChar("verbose", 1);
 
-    enable_whitelist = prefs.getBool("wl_en", false);
+    enable_allowlist = prefs.getBool("al_en", false);
 
-    int wl_len = prefs.getInt("wl_len", 0);
-    for (int i = 0; i < wl_len; i++) {
+    int al_len = prefs.getInt("al_len", 0);
+    for (int i = 0; i < al_len; i++) {
         char key[10];
-        snprintf(key, 10, "wl_%d", i);
+        snprintf(key, 10, "al_%d", i);
         String mac = prefs.getString(key, "");
         if (mac.length() > 0) {
-            whitelist.insert(mac.c_str());
+            allowlist.insert(mac.c_str());
         }
     }
 
@@ -249,38 +249,38 @@ static void forth_get_verbose() {
     Push = (atl_int) verbose;
 }
 
-static void forth_set_enable_whitelist() {
+static void forth_set_enable_allowlist() {
     Sl(1);
-    enable_whitelist = (int)S0;
+    enable_allowlist = (int)S0;
     Pop;
 
-    if (enable_whitelist) enable_whitelist = 1;
+    if (enable_allowlist) enable_allowlist = 1;
 }
 
-static void forth_get_enable_whitelist() {
+static void forth_get_enable_allowlist() {
     So(1);
-    Push = (atl_int) enable_whitelist;
+    Push = (atl_int) enable_allowlist;
 }
 
-static void forth_whitelist_list() {
-    Serial.print("mac-address white list\n");
-    Serial.print("----------------------\n");
-    for (auto &mac : whitelist) {
+static void forth_allowlist_list() {
+    Serial.print("mac-address allowlist\n");
+    Serial.print("---------------------\n");
+    for (auto &mac : allowlist) {
         Serial.println(mac.c_str());
     }
 }
 
-static void forth_whitelist_insert() {
+static void forth_allowlist_insert() {
     Sl(1);
     Hpc(S0);
-    whitelist.insert((char *) S0);
+    allowlist.insert((char *) S0);
     Pop;
 }
 
-static void forth_whitelist_erase() {
+static void forth_allowlist_erase() {
     Sl(1);
     Hpc(S0);
-    whitelist.erase((char *)S0);
+    allowlist.erase((char *)S0);
     Pop;
 }
 
@@ -334,12 +334,12 @@ static struct primfcn my_primitives[] = {
     {"0VERB!", forth_set_verbose},
     {"0VERB@", forth_get_verbose},
 
-    {"0WLEN!", forth_set_enable_whitelist},
-    {"0WLEN@", forth_get_enable_whitelist},
+    {"0ALEN!", forth_set_enable_allowlist},
+    {"0ALEN@", forth_get_enable_allowlist},
 
-    {"0WL?", forth_whitelist_list},
-    {"0WL+", forth_whitelist_insert},
-    {"0WL-", forth_whitelist_erase},
+    {"0AL?", forth_allowlist_list},
+    {"0AL+", forth_allowlist_insert},
+    {"0AL-", forth_allowlist_erase},
 
     {"0SAVE", saveSettings},
 
