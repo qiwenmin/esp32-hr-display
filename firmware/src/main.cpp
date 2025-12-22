@@ -11,11 +11,17 @@ extern "C" {
 }
 
 /* =========================================================
- * 引脚配置 (WeAct ESP32-C3)
+ * 引脚配置
  * ========================================================= */
+#if defined(BOARD_C3)
 #define TM_STB 10
 #define TM_CLK 6
 #define TM_DIO 7
+#elif defined(BOARD_DEVKITV1)
+#define TM_STB 4
+#define TM_CLK 16
+#define TM_DIO 17
+#endif
 
 #define RSSI_LIMIT -90
 
