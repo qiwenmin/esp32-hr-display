@@ -359,6 +359,11 @@ static struct primfcn my_primitives[] = {
     {NULL, NULL}
 };
 
+static inline void flush_stdout() {
+    fflush(stdout);
+    fsync(fileno(stdout));
+}
+
 void forthTask(void* arg) {
     char inputBuffer[128];
     int idx = 0;
@@ -382,10 +387,10 @@ void forthTask(void* arg) {
                     Serial.flush();
                     atl_eval(inputBuffer);
                     printf(" ok\n");
-                    fflush(stdout);
+                    flush_stdout();
                 } else {
                     printf("\n");
-                    fflush(stdout);
+                    flush_stdout();
                 }
                 Serial.print("[FORTH] ");
                 Serial.flush();
@@ -405,6 +410,21 @@ void forthTask(void* arg) {
             }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+// Atlast的键盘交互实现
+extern "C" {
+    int Keyhit_impl() {
+        flush_stdout();
+
+        if (Serial.available()) {
+            return Serial.read();
+        }
+
+        taskYIELD();
+
+        return 0;
     }
 }
 
