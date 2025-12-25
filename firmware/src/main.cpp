@@ -17,6 +17,10 @@ extern "C" {
 #define TM_STB 10
 #define TM_CLK 6
 #define TM_DIO 7
+#elif defined(BOARD_C3_SUPER_MINI)
+#define TM_STB 10
+#define TM_CLK 6
+#define TM_DIO 7
 #elif defined(BOARD_DEVKITV1)
 #define TM_STB 4
 #define TM_CLK 16
