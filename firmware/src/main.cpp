@@ -335,6 +335,32 @@ static void forth_list_tasks() {
     }
 }
 
+static void forth_pin_mode() {
+    Sl(2);
+    int mode = (int)S0;
+    int pin = (int)S1;
+    Pop2;
+
+    pinMode(pin, mode);
+}
+
+static void forth_digital_write() {
+    Sl(2);
+    int val = (int)S0;
+    int pin = (int)S1;
+    Pop2;
+
+    digitalWrite(pin, val);
+}
+
+static void forth_delay_ms() {
+    Sl(1);
+    int ms = (int)S0;
+    Pop;
+
+    vTaskDelay(pdMS_TO_TICKS(ms));
+}
+
 static struct primfcn my_primitives[] = {
     {"0HR", forth_get_hr},
 
@@ -355,6 +381,10 @@ static struct primfcn my_primitives[] = {
 
     {"0PS", forth_list_tasks},
     {"0REBOOT", esp_restart},
+
+    {"0MODE", forth_pin_mode},
+    {"0PIN!", forth_digital_write},
+    {"0MS", forth_delay_ms},
 
     {NULL, NULL}
 };
