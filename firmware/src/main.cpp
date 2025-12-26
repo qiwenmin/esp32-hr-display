@@ -58,7 +58,7 @@ void hrNotifyCallback(NimBLERemoteCharacteristic* chr, uint8_t* data, size_t len
 
     // 串口输出心率值
     if (hrValue > 0 && hrValue != currentHR) {
-        INFO Serial.printf("[DATA] Heart Rate: %d bpm\n", hrValue);
+        INFO printf("[DATA] Heart Rate: %d bpm\n", hrValue);
     }
 
     // 更新全局变量
@@ -72,13 +72,13 @@ class MyBLECallbacks : public NimBLEClientCallbacks, public NimBLEScanCallbacks 
     void onResult(const NimBLEAdvertisedDevice* dev) override {
         if (dev->isAdvertisingService(NimBLEUUID((uint16_t)0x180D)) && dev->getRSSI() >= RSSI_LIMIT) {
             targetAddr = dev->getAddress();
-            INFO Serial.printf("[SCAN] Target found: %s, RSSI: %d\n", targetAddr.toString().c_str(), dev->getRSSI());
+            INFO printf("[SCAN] Target found: %s, RSSI: %d\n", targetAddr.toString().c_str(), dev->getRSSI());
             if (enable_allowlist) {
                 if (!allowlist.contains(targetAddr.toString())) {
-                    INFO Serial.printf("[SCAN] %s is not in the allowlist. Ignored.\n", targetAddr.toString().c_str());
+                    INFO printf("[SCAN] %s is not in the allowlist. Ignored.\n", targetAddr.toString().c_str());
                     return;
                 } else {
-                    INFO Serial.printf("[SCAN] %s is in the allowlist.\n", targetAddr.toString().c_str());
+                    INFO printf("[SCAN] %s is in the allowlist.\n", targetAddr.toString().c_str());
                 }
             }
             NimBLEDevice::getScan()->stop();
@@ -87,12 +87,12 @@ class MyBLECallbacks : public NimBLEClientCallbacks, public NimBLEScanCallbacks 
     }
 
     void onDisconnect(NimBLEClient* c, int reason) override {
-        INFO Serial.printf("[BLE] Disconnected, reason: %d\n", reason);
+        INFO printf("[BLE] Disconnected, reason: %d\n", reason);
         currentHR = 0;
         doConnect = false;
         // 断开后稍微延迟再扫描，增加稳定性
         vTaskDelay(pdMS_TO_TICKS(1000));
-        INFO Serial.println("[SCAN] Resuming scan...");
+        INFO printf("[SCAN] Resuming scan...\n");
         NimBLEDevice::getScan()->start(0, false);
     }
 };
@@ -103,13 +103,13 @@ static MyBLECallbacks bleHandler;
  * 连接逻辑
  * ========================================================= */
 bool connectToDevice() {
-    INFO Serial.printf("[CONN] Attempting to connect to %s\n", targetAddr.toString().c_str());
+    INFO printf("[CONN] Attempting to connect to %s\n", targetAddr.toString().c_str());
     if (!pClient->connect(targetAddr, false)) {
-        ERROR Serial.println("[CONN] Connection failed");
+        ERROR printf("[CONN] Connection failed\n");
         return false;
     }
 
-    INFO Serial.println("[CONN] Connected, discovering services...");
+    INFO printf("[CONN] Connected, discovering services...\n");
     pClient->getServices(true);
 
     NimBLERemoteService* pSvc = pClient->getService("180D");
@@ -117,13 +117,13 @@ bool connectToDevice() {
         NimBLERemoteCharacteristic* pChar = pSvc->getCharacteristic("2A37");
         if (pChar && pChar->canNotify()) {
             if (pChar->subscribe(true, hrNotifyCallback)) {
-                INFO Serial.println("[CONN] HR service subscribed successfully");
+                INFO printf("[CONN] HR service subscribed successfully\n");
                 return true;
             }
         }
     }
 
-    ERROR Serial.println("[CONN] Service or characteristic not found");
+    ERROR printf("[CONN] Service or characteristic not found\n");
     pClient->disconnect();
     return false;
 }
@@ -167,7 +167,7 @@ void hrManagerTask(void* arg) {
         if (doConnect && !pClient->isConnected()) {
             if (!connectToDevice()) {
                 doConnect = false;
-                ERROR Serial.println("[MGR] Connection failed, back to scanning");
+                ERROR printf("[MGR] Connection failed, back to scanning\n");
                 NimBLEDevice::getScan()->start(0, false);
             }
         }
@@ -198,7 +198,7 @@ static void saveSettings() {
 
     prefs.end(); // 关闭并保存
 
-    INFO Serial.println("Settings saved to NVS.");
+    INFO printf("Settings saved to NVS.\n");
 }
 
 static void loadSettings() {
@@ -273,10 +273,10 @@ static void forth_get_enable_allowlist() {
 }
 
 static void forth_allowlist_list() {
-    Serial.print("mac-address allowlist\n");
-    Serial.print("---------------------\n");
+    printf("mac-address allowlist\n");
+    printf("---------------------\n");
     for (auto &mac : allowlist) {
-        Serial.println(mac.c_str());
+        printf("%s\n", mac.c_str());
     }
 }
 
@@ -306,8 +306,8 @@ static void forth_list_tasks() {
         // 第三个参数为 NULL 表示不计算 CPU 使用率百分比（需要额外配置计时器）
         uxArraySize = uxTaskGetSystemState(pxTaskStatusArray, uxArraySize, NULL);
 
-        Serial.println("\n--- Task Debug Info ---");
-        Serial.printf("%-16s %-10s %-10s %-10s %-10s\n", "Name", "State", "Priority", "StackMin", "Number");
+        printf("\n--- Task Debug Info ---\n");
+        printf("%-16s %-10s %-10s %-10s %-10s\n", "Name", "State", "Priority", "StackMin", "Number");
 
         for (UBaseType_t x = 0; x < uxArraySize; x++) {
             char stateChar;
@@ -320,18 +320,18 @@ static void forth_list_tasks() {
                 default:         stateChar = '?'; break;
             }
 
-            Serial.printf("%-16s %-10c %-10u %-10u %-10u\n",
-                          pxTaskStatusArray[x].pcTaskName,
-                          stateChar,
-                          (unsigned int)pxTaskStatusArray[x].uxCurrentPriority,
-                          (unsigned int)pxTaskStatusArray[x].usStackHighWaterMark, // 剩余堆栈最小值
-                          (unsigned int)pxTaskStatusArray[x].xTaskNumber);
+            printf("%-16s %-10c %-10u %-10u %-10u\n",
+                pxTaskStatusArray[x].pcTaskName,
+                stateChar,
+                (unsigned int)pxTaskStatusArray[x].uxCurrentPriority,
+                (unsigned int)pxTaskStatusArray[x].usStackHighWaterMark, // 剩余堆栈最小值
+                (unsigned int)pxTaskStatusArray[x].xTaskNumber);
         }
 
         // 4. 释放内存
         vPortFree(pxTaskStatusArray);
     } else {
-        Serial.println("Failed to allocate memory for task stats.");
+        printf("Failed to allocate memory for task stats.\n");
     }
 }
 
@@ -372,9 +372,9 @@ void forthTask(void* arg) {
     atl_init();
     atl_primdef(my_primitives);
 
-    Serial.println("[FORTH] Interpreter Ready.");
-    Serial.print("[FORTH] ");
-    Serial.flush();
+    printf("[FORTH] Interpreter Ready.\n");
+    printf("[FORTH] ");
+    flush_stdout();
 
     for (;;) {
         if (Serial.available()) {
@@ -383,8 +383,8 @@ void forthTask(void* arg) {
             if (c == '\n') {
                 inputBuffer[idx] = '\0';
                 if (idx > 0) {
-                    Serial.print(" ");
-                    Serial.flush();
+                    printf(" ");
+                    flush_stdout();
                     atl_eval(inputBuffer);
                     printf(" ok\n");
                     flush_stdout();
@@ -392,21 +392,21 @@ void forthTask(void* arg) {
                     printf("\n");
                     flush_stdout();
                 }
-                Serial.print("[FORTH] ");
-                Serial.flush();
+                printf("[FORTH] ");
+                flush_stdout();
                 idx = 0;
             } else if (!isprint(c)) {
                 if (c == '\b') {
                     if (idx > 0) {
-                        Serial.print("\b \b");
-                        Serial.flush();
+                        printf("\b \b");
+                        flush_stdout();
                         idx--;
                     }
                 }
             } else if (idx < sizeof(inputBuffer) - 1) {
                 inputBuffer[idx++] = c;
-                Serial.print(c); // 回显，这里用printf或putc，然后用fflush，不起作用。
-                Serial.flush();
+                printf("%c", c);
+                flush_stdout();
             }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -434,7 +434,7 @@ extern "C" {
 void setup() {
     Serial.begin(115200);
 
-    INFO Serial.println("\n[SYS] ESP32-C3 HR Monitor Starting...");
+    INFO printf("\n[SYS] ESP32-C3 HR Monitor Starting...\n");
 
     // 加载配置
     loadSettings();
@@ -451,7 +451,7 @@ void setup() {
     pScan->setWindow(100);
     pScan->setDuplicateFilter(false);
 
-    INFO Serial.println("[SCAN] Initial scan started...");
+    INFO printf("[SCAN] Initial scan started...\n");
     pScan->start(0, false);
 
     // 创建 FreeRTOS 任务
