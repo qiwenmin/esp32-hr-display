@@ -385,14 +385,25 @@ void forthTask(void* arg) {
                 if (idx > 0) {
                     printf(" ");
                     flush_stdout();
-                    atl_eval(inputBuffer);
-                    printf(" ok\n");
+                    int ret = atl_eval(inputBuffer);
+                    if (ret == ATL_SNORM) {
+                        printf(state || atl_comment ? "\n" : " ok\n");
+                    } else if (ret == ATL_UNDEFINED) { // 错误信息没有换行的情况
+                        printf("\n");
+                    }
                     flush_stdout();
                 } else {
                     printf("\n");
                     flush_stdout();
                 }
-                printf("[FORTH] ");
+
+                if (atl_comment) {
+                    printf("(FORTH) ");
+                } else if (state) {
+                    printf("<FORTH> ");
+                } else {
+                    printf("[FORTH] ");
+                }
                 flush_stdout();
                 idx = 0;
             } else if (!isprint(c)) {
