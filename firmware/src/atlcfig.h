@@ -1,3 +1,5 @@
+#define MEMSTAT
+
 // 提供键盘交互能力
 extern int Keyhit_impl();
 
