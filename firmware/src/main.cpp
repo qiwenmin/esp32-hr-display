@@ -32,7 +32,8 @@ extern "C" {
 TM1638plus_Model2 module(TM_STB, TM_CLK, TM_DIO);
 
 static NimBLEClient* pClient = nullptr;
-static NimBLEAddress targetAddr;
+static NimBLEAddress target_addr;
+static SemaphoreHandle_t target_addr_mutex = xSemaphoreCreateMutex();
 static bool doConnect = false;
 static uint8_t currentHR = 0;
 
@@ -72,17 +73,22 @@ void hrNotifyCallback(NimBLERemoteCharacteristic* chr, uint8_t* data, size_t len
 class MyBLECallbacks : public NimBLEClientCallbacks, public NimBLEScanCallbacks {
     void onResult(const NimBLEAdvertisedDevice* dev) override {
         if (dev->isAdvertisingService(NimBLEUUID((uint16_t)0x180D)) && dev->getRSSI() >= RSSI_LIMIT) {
-            targetAddr = dev->getAddress();
-            INFO printf("[SCAN] Target found: %s, RSSI: %d\n", targetAddr.toString().c_str(), dev->getRSSI());
+            NimBLEAddress addr = dev->getAddress();
+
+            xSemaphoreTake(target_addr_mutex, portMAX_DELAY);
+            target_addr = addr;
+            xSemaphoreGive(target_addr_mutex);
+
+            INFO printf("[SCAN] Target found: %s, RSSI: %d\n", addr.toString().c_str(), dev->getRSSI());
             if (enable_allowlist) {
                 xSemaphoreTake(allowlist_mutex, portMAX_DELAY);
-                bool in_allowlist = allowlist.contains(targetAddr.toString());
+                bool in_allowlist = allowlist.contains(addr.toString());
                 xSemaphoreGive(allowlist_mutex);
                 if (!in_allowlist) {
-                    INFO printf("[SCAN] %s is not in the allowlist. Ignored.\n", targetAddr.toString().c_str());
+                    INFO printf("[SCAN] %s is not in the allowlist. Ignored.\n", addr.toString().c_str());
                     return;
                 } else {
-                    INFO printf("[SCAN] %s is in the allowlist.\n", targetAddr.toString().c_str());
+                    INFO printf("[SCAN] %s is in the allowlist.\n", addr.toString().c_str());
                 }
             }
             NimBLEDevice::getScan()->stop();
@@ -107,8 +113,13 @@ static MyBLECallbacks bleHandler;
  * 连接逻辑
  * ========================================================= */
 bool connectToDevice() {
-    INFO printf("[CONN] Attempting to connect to %s\n", targetAddr.toString().c_str());
-    if (!pClient->connect(targetAddr, false)) {
+    NimBLEAddress addr;
+    xSemaphoreTake(target_addr_mutex, portMAX_DELAY);
+    addr = target_addr;
+    xSemaphoreGive(target_addr_mutex);
+
+    INFO printf("[CONN] Attempting to connect to %s\n", addr.toString().c_str());
+    if (!pClient->connect(addr, false)) {
         ERROR printf("[CONN] Connection failed\n");
         return false;
     }
