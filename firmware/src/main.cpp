@@ -29,42 +29,42 @@ extern "C" {
 
 #define RSSI_LIMIT -90
 
-TM1638plus_Model2 module(TM_STB, TM_CLK, TM_DIO);
+TM1638plus_Model2 g_display(TM_STB, TM_CLK, TM_DIO);
 
-static NimBLEClient* pClient = nullptr;
-static NimBLEAddress target_addr;
-static SemaphoreHandle_t target_addr_mutex = xSemaphoreCreateMutex();
-static bool doConnect = false;
-static uint8_t currentHR = 0;
+static NimBLEClient* g_client = nullptr;
+static NimBLEAddress g_target_addr;
+static SemaphoreHandle_t g_target_addr_mutex = xSemaphoreCreateMutex();
+static bool g_do_connect = false;
+static uint8_t g_hr = 0;
 
-static Preferences prefs;
-const char* pref_namespace = "sys_cfg";
+static Preferences g_prefs;
+const char* k_pref_namespace = "sys_cfg";
 
-static uint8_t brightness = 1;
-static uint8_t verbose = 1;
-static bool enable_allowlist = false;
-static std::set<std::string> allowlist;
-static SemaphoreHandle_t allowlist_mutex = xSemaphoreCreateMutex();
+static uint8_t g_brightness = 1;
+static uint8_t g_verbose = 1;
+static bool g_enable_allowlist = false;
+static std::set<std::string> g_allowlist;
+static SemaphoreHandle_t g_allowlist_mutex = xSemaphoreCreateMutex();
 
-#define ERROR if (verbose >= 1)
-#define INFO if (verbose >= 2)
+#define ERROR if (g_verbose >= 1)
+#define INFO if (g_verbose >= 2)
 
 /* =========================================================
  * BLE 通知处理
  * ========================================================= */
-void hrNotifyCallback(NimBLERemoteCharacteristic* chr, uint8_t* data, size_t len, bool isNotify) {
+void HrNotifyCallback(NimBLERemoteCharacteristic* chr, uint8_t* data, size_t len, bool is_notify) {
     if (len < 1) return;
 
     // 心率数据解析：通常第1字节是Flag，第2字节是HR值
-    uint8_t hrValue = (data[0] & 0x01) ? (data[1] | (data[2] << 8)) : data[1];
+    uint8_t hr = (data[0] & 0x01) ? (data[1] | (data[2] << 8)) : data[1];
 
     // 串口输出心率值
-    if (hrValue > 0 && hrValue != currentHR) {
-        INFO printf("[DATA] Heart Rate: %d bpm\n", hrValue);
+    if (hr > 0 && hr != g_hr) {
+        INFO printf("[DATA] Heart Rate: %d bpm\n", hr);
     }
 
     // 更新全局变量
-    currentHR = hrValue;
+    g_hr = hr;
 }
 
 /* =========================================================
@@ -75,15 +75,15 @@ class MyBLECallbacks : public NimBLEClientCallbacks, public NimBLEScanCallbacks 
         if (dev->isAdvertisingService(NimBLEUUID((uint16_t)0x180D)) && dev->getRSSI() >= RSSI_LIMIT) {
             NimBLEAddress addr = dev->getAddress();
 
-            xSemaphoreTake(target_addr_mutex, portMAX_DELAY);
-            target_addr = addr;
-            xSemaphoreGive(target_addr_mutex);
+            xSemaphoreTake(g_target_addr_mutex, portMAX_DELAY);
+            g_target_addr = addr;
+            xSemaphoreGive(g_target_addr_mutex);
 
             INFO printf("[SCAN] Target found: %s, RSSI: %d\n", addr.toString().c_str(), dev->getRSSI());
-            if (enable_allowlist) {
-                xSemaphoreTake(allowlist_mutex, portMAX_DELAY);
-                bool in_allowlist = allowlist.contains(addr.toString());
-                xSemaphoreGive(allowlist_mutex);
+            if (g_enable_allowlist) {
+                xSemaphoreTake(g_allowlist_mutex, portMAX_DELAY);
+                bool in_allowlist = g_allowlist.contains(addr.toString());
+                xSemaphoreGive(g_allowlist_mutex);
                 if (!in_allowlist) {
                     INFO printf("[SCAN] %s is not in the allowlist. Ignored.\n", addr.toString().c_str());
                     return;
@@ -92,14 +92,14 @@ class MyBLECallbacks : public NimBLEClientCallbacks, public NimBLEScanCallbacks 
                 }
             }
             NimBLEDevice::getScan()->stop();
-            doConnect = true;
+            g_do_connect = true;
         }
     }
 
     void onDisconnect(NimBLEClient* c, int reason) override {
         INFO printf("[BLE] Disconnected, reason: %d\n", reason);
-        currentHR = 0;
-        doConnect = false;
+        g_hr = 0;
+        g_do_connect = false;
         // 断开后稍微延迟再扫描，增加稳定性
         vTaskDelay(pdMS_TO_TICKS(1000));
         INFO printf("[SCAN] Resuming scan...\n");
@@ -107,31 +107,31 @@ class MyBLECallbacks : public NimBLEClientCallbacks, public NimBLEScanCallbacks 
     }
 };
 
-static MyBLECallbacks bleHandler;
+static MyBLECallbacks g_ble_handler;
 
 /* =========================================================
  * 连接逻辑
  * ========================================================= */
-bool connectToDevice() {
+bool ConnectToDevice() {
     NimBLEAddress addr;
-    xSemaphoreTake(target_addr_mutex, portMAX_DELAY);
-    addr = target_addr;
-    xSemaphoreGive(target_addr_mutex);
+    xSemaphoreTake(g_target_addr_mutex, portMAX_DELAY);
+    addr = g_target_addr;
+    xSemaphoreGive(g_target_addr_mutex);
 
     INFO printf("[CONN] Attempting to connect to %s\n", addr.toString().c_str());
-    if (!pClient->connect(addr, false)) {
+    if (!g_client->connect(addr, false)) {
         ERROR printf("[CONN] Connection failed\n");
         return false;
     }
 
     INFO printf("[CONN] Connected, discovering services...\n");
-    pClient->getServices(true);
+    g_client->getServices(true);
 
-    NimBLERemoteService* pSvc = pClient->getService("180D");
-    if (pSvc) {
-        NimBLERemoteCharacteristic* pChar = pSvc->getCharacteristic("2A37");
-        if (pChar && pChar->canNotify()) {
-            if (pChar->subscribe(true, hrNotifyCallback)) {
+    NimBLERemoteService* remote_svc = g_client->getService("180D");
+    if (remote_svc) {
+        NimBLERemoteCharacteristic* remote_char = remote_svc->getCharacteristic("2A37");
+        if (remote_char && remote_char->canNotify()) {
+            if (remote_char->subscribe(true, HrNotifyCallback)) {
                 INFO printf("[CONN] HR service subscribed successfully\n");
                 return true;
             }
@@ -139,36 +139,36 @@ bool connectToDevice() {
     }
 
     ERROR printf("[CONN] Service or characteristic not found\n");
-    pClient->disconnect();
+    g_client->disconnect();
     return false;
 }
 
 /* =========================================================
  * Model 2 显示任务
  * ========================================================= */
-void displayTask(void* arg) {
-    module.displayBegin();
-    module.brightness(brightness);
+void DisplayTask(void* arg) {
+    g_display.displayBegin();
+    g_display.brightness(g_brightness);
 
-    char textBuffer[16];
+    char text_buffer[16];
 
     for (;;) {
-        if (pClient && pClient->isConnected()) {
+        if (g_client && g_client->isConnected()) {
             // Model 2 使用 DisplayStr
-            if (currentHR) {
-                snprintf(textBuffer, sizeof(textBuffer), "%3d", currentHR);
+            if (g_hr) {
+                snprintf(text_buffer, sizeof(text_buffer), "%3d", g_hr);
             } else {
-                snprintf(textBuffer, sizeof(textBuffer), "---");
+                snprintf(text_buffer, sizeof(text_buffer), "---");
             }
-        } else if (doConnect) {
-            snprintf(textBuffer, sizeof(textBuffer), "Con");
+        } else if (g_do_connect) {
+            snprintf(text_buffer, sizeof(text_buffer), "Con");
         } else {
-            snprintf(textBuffer, sizeof(textBuffer), "Scn");
+            snprintf(text_buffer, sizeof(text_buffer), "Scn");
         }
 
         // Model 2 专用的显示函数：DisplayStr(字符串, 填充ASCII)
         // 注意：Model 2 库对字符位置映射比较严格
-        module.DisplayStr(textBuffer, 0);
+        g_display.DisplayStr(text_buffer, 0);
 
         vTaskDelay(pdMS_TO_TICKS(250));
     }
@@ -177,11 +177,11 @@ void displayTask(void* arg) {
 /* =========================================================
  * BLE 管理任务
  * ========================================================= */
-void hrManagerTask(void* arg) {
+void HrManagerTask(void* arg) {
     for (;;) {
-        if (doConnect && !pClient->isConnected()) {
-            if (!connectToDevice()) {
-                doConnect = false;
+        if (g_do_connect && !g_client->isConnected()) {
+            if (!ConnectToDevice()) {
+                g_do_connect = false;
                 ERROR printf("[MGR] Connection failed, back to scanning\n");
                 NimBLEDevice::getScan()->start(0, false);
             }
@@ -193,54 +193,54 @@ void hrManagerTask(void* arg) {
 /* =========================================================
  * 配置的保存和加载
  * ========================================================= */
-static void saveSettings() {
+static void SaveSettings() {
     // 参数2为 false 表示读写模式
-    prefs.begin(pref_namespace, false);
+    g_prefs.begin(k_pref_namespace, false);
 
-    prefs.clear();
+    g_prefs.clear();
 
-    prefs.putUChar("brightness", brightness);
-    prefs.putUChar("verbose", verbose);
+    g_prefs.putUChar("brightness", g_brightness);
+    g_prefs.putUChar("verbose", g_verbose);
 
-    prefs.putBool("al_en", enable_allowlist);
-    xSemaphoreTake(allowlist_mutex, portMAX_DELAY);
-    prefs.putInt("al_len", allowlist.size());
+    g_prefs.putBool("al_en", g_enable_allowlist);
+    xSemaphoreTake(g_allowlist_mutex, portMAX_DELAY);
+    g_prefs.putInt("al_len", g_allowlist.size());
     int i = 0;
-    for (const auto &mac : allowlist) {
+    for (const auto &mac : g_allowlist) {
         char key[10];
         snprintf(key, 10, "al_%d", i++);
-        prefs.putString(key, mac.c_str());
+        g_prefs.putString(key, mac.c_str());
     }
-    xSemaphoreGive(allowlist_mutex);
+    xSemaphoreGive(g_allowlist_mutex);
 
-    prefs.end(); // 关闭并保存
+    g_prefs.end(); // 关闭并保存
 
     INFO printf("Settings saved to NVS.\n");
 }
 
-static void loadSettings() {
+static void LoadSettings() {
     // 参数2为 true 表示只读模式
-    prefs.begin(pref_namespace, true);
+    g_prefs.begin(k_pref_namespace, true);
 
     // 第二个参数是默认值。如果 NVS 中还没保存过该项，则返回此值。
-    brightness = prefs.getUChar("brightness", 1);
-    verbose = prefs.getUChar("verbose", 1);
+    g_brightness = g_prefs.getUChar("brightness", 1);
+    g_verbose = g_prefs.getUChar("verbose", 1);
 
-    enable_allowlist = prefs.getBool("al_en", false);
+    g_enable_allowlist = g_prefs.getBool("al_en", false);
 
-    int al_len = prefs.getInt("al_len", 0);
-    xSemaphoreTake(allowlist_mutex, portMAX_DELAY);
+    int al_len = g_prefs.getInt("al_len", 0);
+    xSemaphoreTake(g_allowlist_mutex, portMAX_DELAY);
     for (int i = 0; i < al_len; i++) {
         char key[10];
         snprintf(key, 10, "al_%d", i);
-        String mac = prefs.getString(key, "");
+        String mac = g_prefs.getString(key, "");
         if (mac.length() > 0) {
-            allowlist.insert(mac.c_str());
+            g_allowlist.insert(mac.c_str());
         }
     }
-    xSemaphoreGive(allowlist_mutex);
+    xSemaphoreGive(g_allowlist_mutex);
 
-    prefs.end();
+    g_prefs.end();
 }
 
 /* =========================================================
@@ -248,113 +248,113 @@ static void loadSettings() {
  * ========================================================= */
 static void forth_get_hr() {
     So(1);
-    Push = (atl_int) currentHR;
+    Push = (atl_int) g_hr;
 }
 
 static void forth_set_br() {
     Sl(1);
-    brightness = (int)S0;
+    g_brightness = (int)S0;
     Pop;
 
-    if (brightness > 7) brightness = 7;
-    module.brightness(brightness);
+    if (g_brightness > 7) g_brightness = 7;
+    g_display.brightness(g_brightness);
 }
 
 static void forth_get_br() {
     So(1);
-    Push = (atl_int) brightness;
+    Push = (atl_int) g_brightness;
 }
 
 static void forth_set_verbose() {
     Sl(1);
-    verbose = (int)S0;
+    g_verbose = (int)S0;
     Pop;
 
-    if (verbose > 2) verbose = 2;
+    if (g_verbose > 2) g_verbose = 2;
 }
 
 static void forth_get_verbose() {
     So(1);
-    Push = (atl_int) verbose;
+    Push = (atl_int) g_verbose;
 }
 
 static void forth_set_enable_allowlist() {
     Sl(1);
-    enable_allowlist = (int)S0;
+    g_enable_allowlist = (int)S0;
     Pop;
 
-    if (enable_allowlist) enable_allowlist = 1;
+    if (g_enable_allowlist) g_enable_allowlist = 1;
 }
 
 static void forth_get_enable_allowlist() {
     So(1);
-    Push = (atl_int) enable_allowlist;
+    Push = (atl_int) g_enable_allowlist;
 }
 
 static void forth_allowlist_list() {
     printf("mac-address allowlist\n");
     printf("---------------------\n");
-    xSemaphoreTake(allowlist_mutex, portMAX_DELAY);
-    for (auto &mac : allowlist) {
+    xSemaphoreTake(g_allowlist_mutex, portMAX_DELAY);
+    for (auto &mac : g_allowlist) {
         printf("%s\n", mac.c_str());
     }
-    xSemaphoreGive(allowlist_mutex);
+    xSemaphoreGive(g_allowlist_mutex);
 }
 
 static void forth_allowlist_insert() {
     Sl(1);
     Hpc(S0);
-    xSemaphoreTake(allowlist_mutex, portMAX_DELAY);
-    allowlist.insert((char *) S0);
-    xSemaphoreGive(allowlist_mutex);
+    xSemaphoreTake(g_allowlist_mutex, portMAX_DELAY);
+    g_allowlist.insert((char *) S0);
+    xSemaphoreGive(g_allowlist_mutex);
     Pop;
 }
 
 static void forth_allowlist_erase() {
     Sl(1);
     Hpc(S0);
-    xSemaphoreTake(allowlist_mutex, portMAX_DELAY);
-    allowlist.erase((char *)S0);
-    xSemaphoreGive(allowlist_mutex);
+    xSemaphoreTake(g_allowlist_mutex, portMAX_DELAY);
+    g_allowlist.erase((char *)S0);
+    xSemaphoreGive(g_allowlist_mutex);
     Pop;
 }
 
 static void forth_list_tasks() {
     // 1. 获取当前任务总数
-    UBaseType_t uxArraySize = uxTaskGetNumberOfTasks();
+    UBaseType_t task_count = uxTaskGetNumberOfTasks();
 
     // 2. 为任务状态数组分配内存
-    TaskStatus_t *pxTaskStatusArray = (TaskStatus_t *)pvPortMalloc(uxArraySize * sizeof(TaskStatus_t));
+    TaskStatus_t *task_status_array = (TaskStatus_t *)pvPortMalloc(task_count * sizeof(TaskStatus_t));
 
-    if (pxTaskStatusArray != NULL) {
+    if (task_status_array != NULL) {
         // 3. 获取所有任务的状态信息
         // 第三个参数为 NULL 表示不计算 CPU 使用率百分比（需要额外配置计时器）
-        uxArraySize = uxTaskGetSystemState(pxTaskStatusArray, uxArraySize, NULL);
+        task_count = uxTaskGetSystemState(task_status_array, task_count, NULL);
 
         printf("\n--- Task Debug Info ---\n");
         printf("%-16s %-10s %-10s %-10s %-10s\n", "Name", "State", "Priority", "StackMin", "Number");
 
-        for (UBaseType_t x = 0; x < uxArraySize; x++) {
-            char stateChar;
-            switch (pxTaskStatusArray[x].eCurrentState) {
-                case eRunning:   stateChar = 'X'; break; // 正在运行
-                case eReady:     stateChar = 'R'; break; // 就绪
-                case eBlocked:   stateChar = 'B'; break; // 阻塞
-                case eSuspended: stateChar = 'S'; break; // 挂起
-                case eDeleted:   stateChar = 'D'; break; // 已删除
-                default:         stateChar = '?'; break;
+        for (UBaseType_t x = 0; x < task_count; x++) {
+            char state_char;
+            switch (task_status_array[x].eCurrentState) {
+                case eRunning:   state_char = 'X'; break; // 正在运行
+                case eReady:     state_char = 'R'; break; // 就绪
+                case eBlocked:   state_char = 'B'; break; // 阻塞
+                case eSuspended: state_char = 'S'; break; // 挂起
+                case eDeleted:   state_char = 'D'; break; // 已删除
+                default:         state_char = '?'; break;
             }
 
             printf("%-16s %-10c %-10u %-10u %-10u\n",
-                pxTaskStatusArray[x].pcTaskName,
-                stateChar,
-                (unsigned int)pxTaskStatusArray[x].uxCurrentPriority,
-                (unsigned int)pxTaskStatusArray[x].usStackHighWaterMark, // 剩余堆栈最小值
-                (unsigned int)pxTaskStatusArray[x].xTaskNumber);
+                task_status_array[x].pcTaskName,
+                state_char,
+                (unsigned int)task_status_array[x].uxCurrentPriority,
+                (unsigned int)task_status_array[x].usStackHighWaterMark, // 剩余堆栈最小值
+                (unsigned int)task_status_array[x].xTaskNumber);
         }
 
         // 4. 释放内存
-        vPortFree(pxTaskStatusArray);
+        vPortFree(task_status_array);
     } else {
         printf("Failed to allocate memory for task stats.\n");
     }
@@ -402,7 +402,7 @@ static struct primfcn my_primitives[] = {
     {"0AL+", forth_allowlist_insert},
     {"0AL-", forth_allowlist_erase},
 
-    {"0SAVE", saveSettings},
+    {"0SAVE", SaveSettings},
 
     {"0PS", forth_list_tasks},
     {"0REBOOT", esp_restart},
@@ -419,8 +419,8 @@ static inline void flush_stdout() {
     fsync(fileno(stdout));
 }
 
-void forthTask(void* arg) {
-    char inputBuffer[128];
+void ForthTask(void* arg) {
+    char input_buffer[128];
     int idx = 0;
 
     // 初始化 Atlast 实例
@@ -436,11 +436,11 @@ void forthTask(void* arg) {
             char c = Serial.read();
 
             if (c == '\n') {
-                inputBuffer[idx] = '\0';
+                input_buffer[idx] = '\0';
                 if (idx > 0) {
                     printf(" ");
                     flush_stdout();
-                    int ret = atl_eval(inputBuffer);
+                    int ret = atl_eval(input_buffer);
                     if (ret == ATL_SNORM) {
                         printf(state || atl_comment ? "\n" : " ok\n");
                     } else if (ret == ATL_UNDEFINED) { // 错误信息没有换行的情况
@@ -469,8 +469,8 @@ void forthTask(void* arg) {
                         idx--;
                     }
                 }
-            } else if (idx < sizeof(inputBuffer) - 1) {
-                inputBuffer[idx++] = c;
+            } else if (idx < sizeof(input_buffer) - 1) {
+                input_buffer[idx++] = c;
                 printf("%c", c);
                 flush_stdout();
             }
@@ -503,27 +503,27 @@ void setup() {
     INFO printf("\n[SYS] ESP32-C3 HR Monitor Starting...\n");
 
     // 加载配置
-    loadSettings();
+    LoadSettings();
 
     // 初始化蓝牙
     NimBLEDevice::init("C3_HR_MON");
-    pClient = NimBLEDevice::createClient();
-    pClient->setClientCallbacks(&bleHandler, false);
+    g_client = NimBLEDevice::createClient();
+    g_client->setClientCallbacks(&g_ble_handler, false);
 
     // 配置扫描
-    NimBLEScan* pScan = NimBLEDevice::getScan();
-    pScan->setScanCallbacks(&bleHandler, false);
-    pScan->setInterval(150);
-    pScan->setWindow(100);
-    pScan->setDuplicateFilter(false);
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    scan->setScanCallbacks(&g_ble_handler, false);
+    scan->setInterval(150);
+    scan->setWindow(100);
+    scan->setDuplicateFilter(false);
 
     INFO printf("[SCAN] Initial scan started...\n");
-    pScan->start(0, false);
+    scan->start(0, false);
 
     // 创建 FreeRTOS 任务
-    xTaskCreate(hrManagerTask, "hr_mgr", 4096, nullptr, 10, nullptr);
-    xTaskCreate(displayTask,   "ds_mgr", 2048, nullptr,  5, nullptr);
-    xTaskCreate(forthTask,  "forth_cli", 4096, nullptr,  2, nullptr);
+    xTaskCreate(HrManagerTask, "hr_mgr", 4096, nullptr, 10, nullptr);
+    xTaskCreate(DisplayTask,   "ds_mgr", 2048, nullptr,  5, nullptr);
+    xTaskCreate(ForthTask,  "forth_cli", 4096, nullptr,  2, nullptr);
 }
 
 void loop() {
