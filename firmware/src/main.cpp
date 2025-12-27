@@ -43,6 +43,7 @@ static uint8_t brightness = 1;
 static uint8_t verbose = 1;
 static bool enable_allowlist = false;
 static std::set<std::string> allowlist;
+static SemaphoreHandle_t allowlist_mutex = xSemaphoreCreateMutex();
 
 #define ERROR if (verbose >= 1)
 #define INFO if (verbose >= 2)
@@ -74,7 +75,10 @@ class MyBLECallbacks : public NimBLEClientCallbacks, public NimBLEScanCallbacks 
             targetAddr = dev->getAddress();
             INFO printf("[SCAN] Target found: %s, RSSI: %d\n", targetAddr.toString().c_str(), dev->getRSSI());
             if (enable_allowlist) {
-                if (!allowlist.contains(targetAddr.toString())) {
+                xSemaphoreTake(allowlist_mutex, portMAX_DELAY);
+                bool in_allowlist = allowlist.contains(targetAddr.toString());
+                xSemaphoreGive(allowlist_mutex);
+                if (!in_allowlist) {
                     INFO printf("[SCAN] %s is not in the allowlist. Ignored.\n", targetAddr.toString().c_str());
                     return;
                 } else {
@@ -188,6 +192,7 @@ static void saveSettings() {
     prefs.putUChar("verbose", verbose);
 
     prefs.putBool("al_en", enable_allowlist);
+    xSemaphoreTake(allowlist_mutex, portMAX_DELAY);
     prefs.putInt("al_len", allowlist.size());
     int i = 0;
     for (const auto &mac : allowlist) {
@@ -195,6 +200,7 @@ static void saveSettings() {
         snprintf(key, 10, "al_%d", i++);
         prefs.putString(key, mac.c_str());
     }
+    xSemaphoreGive(allowlist_mutex);
 
     prefs.end(); // 关闭并保存
 
@@ -212,6 +218,7 @@ static void loadSettings() {
     enable_allowlist = prefs.getBool("al_en", false);
 
     int al_len = prefs.getInt("al_len", 0);
+    xSemaphoreTake(allowlist_mutex, portMAX_DELAY);
     for (int i = 0; i < al_len; i++) {
         char key[10];
         snprintf(key, 10, "al_%d", i);
@@ -220,6 +227,7 @@ static void loadSettings() {
             allowlist.insert(mac.c_str());
         }
     }
+    xSemaphoreGive(allowlist_mutex);
 
     prefs.end();
 }
@@ -275,22 +283,28 @@ static void forth_get_enable_allowlist() {
 static void forth_allowlist_list() {
     printf("mac-address allowlist\n");
     printf("---------------------\n");
+    xSemaphoreTake(allowlist_mutex, portMAX_DELAY);
     for (auto &mac : allowlist) {
         printf("%s\n", mac.c_str());
     }
+    xSemaphoreGive(allowlist_mutex);
 }
 
 static void forth_allowlist_insert() {
     Sl(1);
     Hpc(S0);
+    xSemaphoreTake(allowlist_mutex, portMAX_DELAY);
     allowlist.insert((char *) S0);
+    xSemaphoreGive(allowlist_mutex);
     Pop;
 }
 
 static void forth_allowlist_erase() {
     Sl(1);
     Hpc(S0);
+    xSemaphoreTake(allowlist_mutex, portMAX_DELAY);
     allowlist.erase((char *)S0);
+    xSemaphoreGive(allowlist_mutex);
     Pop;
 }
 
