@@ -35,6 +35,8 @@ static NimBLEClient* g_client = nullptr;
 static NimBLEAddress g_target_addr;
 static SemaphoreHandle_t g_target_addr_mutex = xSemaphoreCreateMutex();
 static bool g_do_connect = false;
+static bool g_need_scan = false;
+static uint32_t g_last_disconnect_time = 0;
 static uint8_t g_hr = 0;
 
 static Preferences g_prefs;
@@ -100,10 +102,7 @@ class MyBLECallbacks : public NimBLEClientCallbacks, public NimBLEScanCallbacks 
         INFO printf("[BLE] Disconnected, reason: %d\n", reason);
         g_hr = 0;
         g_do_connect = false;
-        // 断开后稍微延迟再扫描，增加稳定性
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        INFO printf("[SCAN] Resuming scan...\n");
-        NimBLEDevice::getScan()->start(0, false);
+        g_need_scan = true;
     }
 };
 
@@ -178,11 +177,21 @@ void DisplayTask(void* arg) {
  * BLE 管理任务
  * ========================================================= */
 void HrManagerTask(void* arg) {
+    const uint32_t SCAN_DELAY_MS = 1000;
+
     for (;;) {
         if (g_do_connect && !g_client->isConnected()) {
             if (!ConnectToDevice()) {
                 g_do_connect = false;
+                g_need_scan = true;
+                g_last_disconnect_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
                 ERROR printf("[MGR] Connection failed, back to scanning\n");
+            }
+        } else if (g_need_scan && !g_client->isConnected()) {
+            uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+            if (current_time - g_last_disconnect_time >= SCAN_DELAY_MS) {
+                g_need_scan = false;
+                INFO printf("[SCAN] Resuming scan...\n");
                 NimBLEDevice::getScan()->start(0, false);
             }
         }
@@ -518,6 +527,8 @@ void setup() {
     scan->setDuplicateFilter(false);
 
     INFO printf("[SCAN] Initial scan started...\n");
+    g_need_scan = true;
+    g_last_disconnect_time = xTaskGetTickCount() * portTICK_PERIOD_MS - 1000;
     scan->start(0, false);
 
     // 创建 FreeRTOS 任务
