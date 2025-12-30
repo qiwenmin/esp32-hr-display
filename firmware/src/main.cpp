@@ -1,7 +1,8 @@
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <Preferences.h>
-#include <TM1638plus_Model2.h>
+#include <TM1650.h>
+#include <TM16xxDisplay.h>
 
 #include <set>
 
@@ -14,22 +15,21 @@ extern "C" {
  * 引脚配置
  * ========================================================= */
 #if defined(BOARD_C3)
-#define TM_STB 10
-#define TM_CLK 6
 #define TM_DIO 7
+#define TM_CLK 6
 #elif defined(BOARD_C3_SUPER_MINI)
-#define TM_STB 10
-#define TM_CLK 6
 #define TM_DIO 7
+#define TM_CLK 6
 #elif defined(BOARD_DEVKITV1)
-#define TM_STB 4
-#define TM_CLK 16
 #define TM_DIO 17
+#define TM_CLK 16
 #endif
 
 #define RSSI_LIMIT -90
 
-TM1638plus_Model2 g_display(TM_STB, TM_CLK, TM_DIO);
+// TM1650 4位7段LED显示器
+TM1650 g_module(TM_DIO, TM_CLK, 3);
+TM16xxDisplay g_display(&g_module, 3);
 
 static NimBLEClient* g_client = nullptr;
 static NimBLEAddress g_target_addr;
@@ -143,17 +143,16 @@ bool ConnectToDevice() {
 }
 
 /* =========================================================
- * Model 2 显示任务
+ * 显示任务
  * ========================================================= */
 void DisplayTask(void* arg) {
-    g_display.displayBegin();
-    g_display.brightness(g_brightness);
+    g_module.begin();
+    g_display.setIntensity(g_brightness);
 
     char text_buffer[16];
 
     for (;;) {
         if (g_client && g_client->isConnected()) {
-            // Model 2 使用 DisplayStr
             if (g_hr) {
                 snprintf(text_buffer, sizeof(text_buffer), "%3d", g_hr);
             } else {
@@ -165,9 +164,7 @@ void DisplayTask(void* arg) {
             snprintf(text_buffer, sizeof(text_buffer), "Scn");
         }
 
-        // Model 2 专用的显示函数：DisplayStr(字符串, 填充ASCII)
-        // 注意：Model 2 库对字符位置映射比较严格
-        g_display.DisplayStr(text_buffer, 0);
+        g_display.setDisplayToString(text_buffer);
 
         vTaskDelay(pdMS_TO_TICKS(250));
     }
@@ -266,7 +263,7 @@ static void forth_set_br() {
     Pop;
 
     if (g_brightness > 7) g_brightness = 7;
-    g_display.brightness(g_brightness);
+    g_display.setIntensity(g_brightness);
 }
 
 static void forth_get_br() {
