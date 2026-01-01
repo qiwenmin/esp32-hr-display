@@ -154,17 +154,15 @@ void DisplayTask(void* arg) {
     for (;;) {
         if (g_client && g_client->isConnected()) {
             if (g_hr) {
-                snprintf(text_buffer, sizeof(text_buffer), "%3d", g_hr);
+                g_display.setDisplayToDecNumber(g_hr, 0, false);
             } else {
-                snprintf(text_buffer, sizeof(text_buffer), "---");
+                g_display.setDisplayToString("---");
             }
         } else if (g_do_connect) {
-            snprintf(text_buffer, sizeof(text_buffer), "Con");
+            g_display.setDisplayToString("Con");
         } else {
-            snprintf(text_buffer, sizeof(text_buffer), "Scn");
+            g_display.setDisplayToString("Scn");
         }
-
-        g_display.setDisplayToString(text_buffer);
 
         vTaskDelay(pdMS_TO_TICKS(250));
     }
