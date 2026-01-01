@@ -11,6 +11,9 @@ extern "C" {
     #include "atldef.h"
 }
 
+// 版本号
+static const char *k_version = "0.1.0 (Build 20260101)";
+
 /* =========================================================
  * 引脚配置
  * ========================================================= */
@@ -250,6 +253,24 @@ static void LoadSettings() {
 /* =========================================================
  * forth解释器任务及相关的词
  * ========================================================= */
+static void forth_version() {
+    static char *ver_str = nullptr;
+
+    if (ver_str == nullptr) {
+        INFO printf("[ATLAST] Allocating version string.\n");
+
+        stackitem n = (strlen(k_version) + 1 + (sizeof(stackitem) - 1)) / sizeof(stackitem);
+        Ho(n);
+
+        ver_str = (char *)hptr;
+        hptr += n;
+        strcpy(ver_str, k_version);
+    }
+
+    So(1);
+    Push = (atl_int) ver_str;
+}
+
 static void forth_get_hr() {
     So(1);
     Push = (atl_int) g_hr;
@@ -391,6 +412,8 @@ static void forth_delay_ms() {
 }
 
 static struct primfcn my_primitives[] = {
+    {"0VER", forth_version},
+
     {"0HR", forth_get_hr},
 
     {"0BR!", forth_set_br},
